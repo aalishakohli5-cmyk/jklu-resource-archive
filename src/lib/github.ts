@@ -1,3 +1,7 @@
+import {
+  getAuthorizedAccessToken, supabaseProjectUrl, supabasePublicKey,
+} from "./supabase";
+
 export type GitHubNode = {
   name: string;
   path: string;
@@ -20,8 +24,13 @@ export function resourceType(name: string) {
   const ext = name.split(".").pop()?.toLowerCase() || "";
   if (ext === "pdf") return "PDF";
   if (["ppt", "pptx", "odp"].includes(ext)) return "PRESENTATION";
+  if (["doc", "docx", "odt", "rtf"].includes(ext)) return "DOCUMENT";
+  if (["xls", "xlsx", "xlsm", "csv", "ods"].includes(ext)) return "SPREADSHEET";
   if (["py", "ipynb", "c", "cpp", "java", "js", "ts"].includes(ext)) return "CODE";
-  if (["png", "jpg", "jpeg", "webp"].includes(ext)) return "IMAGE";
+  if (["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"].includes(ext)) return "IMAGE";
+  if (["mp4", "webm", "mov"].includes(ext)) return "VIDEO";
+  if (["mp3", "wav", "m4a", "ogg"].includes(ext)) return "AUDIO";
+  if (["txt", "md", "log", "json", "xml", "html", "htm"].includes(ext)) return "TEXT";
   return "FILE";
 }
 
@@ -37,15 +46,39 @@ export function prettify(name: string) {
   return name === "SEM-1" ? "Semester 01" : titleCaseFile(name);
 }
 
-export async function fetchRepositoryTree(): Promise<GitHubNode> {
-  const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
-  const response = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
-  if (!response.ok) {
-    const message = response.status === 403
-      ? "GitHub rate limit reached. Wait a little and try again."
-      : `GitHub could not load this repository (${response.status}).`;
-    throw new Error(message);
+async function requestArchiveService(url: string, init: RequestInit) {
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch {
+    throw new Error("The protected archive service could not be reached. Confirm that the archive-github Supabase Edge Function is deployed and its GitHub repository secrets are configured.");
   }
+  if (!response.ok) {
+    let message = "";
+    try {
+      const payload = await response.json() as { error?: string };
+      message = payload.error || "";
+    } catch {
+      try { message = await response.text(); } catch { /* Keep the fallback below. */ }
+    }
+    if (response.status === 404) {
+      throw new Error("The archive-github Supabase Edge Function is not available in this project yet. Deploy the function, then try again.");
+    }
+    throw new Error(message || `The protected archive request failed (${response.status}).`);
+  }
+  return response;
+}
+
+export async function fetchRepositoryTree(): Promise<GitHubNode> {
+  const token = await getAuthorizedAccessToken();
+  const url = `${supabaseProjectUrl}/functions/v1/archive-github?action=tree`;
+  const response = await requestArchiveService(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: supabasePublicKey,
+      Accept: "application/json",
+    },
+  });
   const payload = await response.json() as { tree: Array<{ path: string; type: string; size?: number; url?: string }>; truncated?: boolean };
   const root: GitHubNode = { name: repo, path: "", type: "dir", children: [] };
   const nodes = new Map<string, GitHubNode>([["", root]]);
@@ -76,6 +109,20 @@ export async function fetchRepositoryTree(): Promise<GitHubNode> {
   sort(root);
   if (payload.truncated) console.warn("GitHub returned a truncated tree. Some files may be missing.");
   return root;
+}
+
+export async function fetchRepositoryFile(path: string): Promise<Blob> {
+  const token = await getAuthorizedAccessToken();
+  const url = new URL(`${supabaseProjectUrl}/functions/v1/archive-github`);
+  url.searchParams.set("action", "download");
+  url.searchParams.set("path", path);
+  const response = await requestArchiveService(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: supabasePublicKey,
+    },
+  });
+  return response.blob();
 }
 
 export function flattenFiles(node: GitHubNode): GitHubNode[] {

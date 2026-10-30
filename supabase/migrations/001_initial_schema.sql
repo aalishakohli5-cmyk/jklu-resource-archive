@@ -232,7 +232,7 @@ using (public.can_manage_library()) with check (public.can_manage_library());
 -- role grants, review/publish actions and audit writes via trusted Edge Functions/RPCs.
 --
 -- Owner bootstrap:
--- 1. Sign in once using configured Google OAuth.
+-- 1. Sign in once using configured Microsoft OAuth with an authorised JKLU account.
 -- 2. Copy the verified auth.users UUID from Supabase dashboard.
 -- 3. Run this statement manually in SQL editor as project owner, replacing UUID:
 --    insert into public.user_roles(user_id, role) values ('YOUR-VERIFIED-USER-UUID', 'owner')
