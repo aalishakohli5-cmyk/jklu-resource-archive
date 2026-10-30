@@ -1,0 +1,4 @@
+project_id = "jklu-resource-archive"
+
+[functions.archive-github]
+verify_jwt = true
