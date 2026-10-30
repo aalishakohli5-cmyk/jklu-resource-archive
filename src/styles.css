@@ -53,7 +53,14 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .topbar { height: 70px; position: sticky; z-index: 20; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 clamp(18px, 4.2vw, 64px); border-bottom: 1px solid rgba(245,233,213,.12); background: rgba(32,30,28,.94); backdrop-filter: blur(18px); }
 .brand-cluster { min-width: 0; display: flex; align-items: center; gap: 14px; }
 .app-shell.intro-mode { min-height: 100vh; }
-.app-shell.archive-mode { min-height: 100vh; }
+.app-shell.archive-mode { position: relative; isolation: isolate; min-height: 100vh; }
+.auth-video-background { position: fixed; z-index: 0; inset: 0; overflow: hidden; background: #191817; pointer-events: none; }
+.auth-video-background video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 70% center; opacity: 0; filter: brightness(.68) contrast(1.12) saturate(1.12); transition: opacity .85s cubic-bezier(.22,.7,.25,1); }
+.auth-video-background video.is-active { opacity: 1; }
+.auth-video-shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(13,12,12,.48), rgba(13,12,12,.2) 55%, rgba(13,12,12,.4)), linear-gradient(0deg, rgba(13,12,12,.42), rgba(13,12,12,.08) 45%, rgba(13,12,12,.3)); }
+.app-shell.archive-mode > .topbar { z-index: 20; }
+.app-shell.archive-mode > .main-content, .app-shell.archive-mode > .footer { position: relative; z-index: 1; }
+.app-shell.archive-mode > .main-content { width: min(1680px, calc(100% - 64px)); }
 .brand { display: inline-flex; align-items: center; gap: 10px; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
 .brand-mark { width: 39px; height: 39px; display: grid; place-items: center; transform: rotate(-3deg); border: 2px solid #292725; border-radius: 12px; background: #f07850; color: #292725; box-shadow: 3px 4px 0 #292725; }
 .brand-mark svg { color: #292725; stroke-width: 2.2; }
@@ -531,10 +538,13 @@ h1, h2, h3, p { margin-top: 0; }
 .signout-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 0 13px; border: 1px solid rgba(255,243,220,.15); border-radius: 13px; background: #2a2826; color: #f3ebdc; font-size: 11px; font-weight: 700; cursor: pointer; transition: transform .18s ease, border-color .18s ease; }
 .signout-button:hover { transform: translateY(-1px); border-color: rgba(240,120,80,.65); }
 .sign-in:disabled { opacity: .58; cursor: wait; }
-.auth-gate { position: relative; display: grid; grid-template-columns: minmax(220px, .82fr) minmax(0, 1fr); align-items: center; gap: clamp(30px, 5vw, 74px); width: min(980px, 100%); min-height: 365px; margin: clamp(22px, 6vh, 62px) auto; padding: clamp(26px, 4vw, 54px); overflow: hidden; border: 1px solid rgba(245,233,213,.2); border-radius: 22px; background: linear-gradient(135deg, rgba(63,59,54,.76), rgba(34,32,30,.86)); -webkit-backdrop-filter: blur(18px) saturate(112%); backdrop-filter: blur(18px) saturate(112%); box-shadow: 6px 7px 0 rgba(12,11,10,.9), 0 22px 48px rgba(0,0,0,.24), inset 1px 1px 0 rgba(255,248,230,.09); }
+.auth-gate { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, .58fr); align-items: center; gap: clamp(24px, 3.5vw, 48px); width: min(860px, calc(100% - clamp(0px, 2vw, 32px))); min-height: 330px; margin: clamp(22px, 6vh, 62px) auto 28px clamp(0px, 2vw, 32px); padding: clamp(24px, 3.4vw, 42px); overflow: hidden; border: 1px solid rgba(245,233,213,.25); border-radius: 22px; background: linear-gradient(135deg, rgba(54,51,47,.44), rgba(31,29,27,.39)); -webkit-backdrop-filter: blur(6px) saturate(118%); backdrop-filter: blur(6px) saturate(118%); box-shadow: 5px 6px 0 rgba(12,11,10,.64), 0 18px 40px rgba(0,0,0,.15), inset 1px 1px 0 rgba(255,248,230,.1); }
 .auth-gate::before { position: absolute; inset: 1px; border: 1px solid rgba(255,248,230,.035); border-radius: 21px; background: linear-gradient(122deg, rgba(255,248,230,.06), transparent 40%); content: ""; pointer-events: none; }
-.auth-gate::after { position: absolute; right: -86px; bottom: -120px; width: 330px; height: 330px; border: 1px dashed rgba(240,120,80,.25); border-radius: 50%; box-shadow: 0 0 0 24px rgba(240,120,80,.025), 0 0 0 48px rgba(240,120,80,.018); content: ""; pointer-events: none; }
-.auth-gate-art { position: relative; display: grid; min-height: 230px; place-items: center; color: #f4df9d; }
+.auth-gate::after { display: none; }
+.auth-gate-art { position: relative; display: grid; min-height: 230px; place-items: center; }
+.auth-logo-frame { position: relative; display: grid; width: min(100%, 220px); aspect-ratio: 1 / 1.05; place-items: center; padding: 15px; overflow: hidden; border: 2px solid #292725; border-radius: 30px; background: #f5eddd; box-shadow: 8px 9px 0 #11100f, inset 2px 2px 0 rgba(255,255,255,.72); transform: none; }
+.auth-logo-frame img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.auth-logo-spark { display: none; }
 .gate-orbit { position: absolute; width: min(226px, 100%); aspect-ratio: 1; border: 1px dashed rgba(244,223,157,.36); border-radius: 50%; box-shadow: 0 0 0 16px rgba(244,223,157,.025), 0 0 0 32px rgba(244,223,157,.018); }
 .gate-document { position: absolute; width: 122px; height: 156px; border: 2px solid #292725; border-radius: 13px; box-shadow: 4px 5px 0 rgba(17,16,15,.88); }
 .gate-document-back { z-index: 0; transform: translate(-10px, -4px) rotate(-11deg); background: #dfa86e; }
@@ -565,8 +575,10 @@ h1, h2, h3, p { margin-top: 0; }
   .account-controls { width: 100%; justify-content: flex-end; }
   .account-email { max-width: min(58vw, 300px); min-height: 36px; padding: 0 8px; font-size: 10px; }
   .signout-button { min-height: 36px; padding: 0 9px; }
-  .auth-gate { grid-template-columns: 1fr; gap: 8px; min-height: 0; margin: 20px auto; padding: 21px 20px 25px; border-radius: 19px; }
-  .auth-gate-art { min-height: 184px; }
+  .auth-gate { grid-template-columns: 1fr; gap: 17px; width: 100%; min-height: 0; margin: 20px auto; padding: 23px 20px 25px; border-radius: 19px; background: linear-gradient(135deg, rgba(54,51,47,.68), rgba(31,29,27,.66)); }
+  .auth-gate-art { min-height: 0; grid-row: 1; }
+  .auth-logo-frame { width: min(170px, 48vw); padding: 11px; border-radius: 23px; }
+  .auth-logo-spark { top: -2%; right: calc(50% - 96px); font-size: 24px; }
   .gate-orbit { width: 158px; }
   .gate-document { width: 88px; height: 112px; border-radius: 10px; }
   .gate-document-front { gap: 7px; padding: 16px 12px; }

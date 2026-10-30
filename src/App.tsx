@@ -3,6 +3,7 @@ import type { KeyboardEvent, RefObject } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import jkluLogo from "./assets/jklu-logo.png";
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, BookOpen, BookText,
   ChevronRight, CircleHelp, Code2, Download, Eye, File, FileImage, FileText, Film,
@@ -313,6 +314,7 @@ export default function App() {
       onDismiss={dismissIntro}
       onEntranceComplete={() => { introReopenPendingRef.current = false; }}
     /> : <>
+    {!authLoading && !authorizedSession && <SeamlessLoopBackground />}
     <header className="topbar">
       <div className="brand-cluster">
         <button className="brand" onClick={home} aria-label="Go to archive home"><span className="brand-mark"><BookOpen size={20} /></span><span className="brand-copy"><b>JKLU <i>/</i> ARCHIVE</b><small>THE STUDENT RESOURCE INDEX</small></span></button>
@@ -328,20 +330,15 @@ export default function App() {
     <main id="archive-home" className="main-content">
       {authLoading && <div className="state-card auth-loading"><span className="spinner" /><b>Checking your sign-in</b><small>Verifying your JKLU account…</small></div>}
       {!authLoading && !authorizedSession && <section className="auth-gate">
-        <div className="auth-gate-art" aria-hidden="true">
-          <span className="gate-orbit" />
-          <span className="gate-document gate-document-back" />
-          <span className="gate-document gate-document-front"><i /><i /><i /></span>
-          <span className="gate-book"><BookOpen size={43} strokeWidth={1.5} /></span>
-          <span className="gate-pencil"><svg viewBox="0 0 58 58" fill="none"><path d="m14 40 23-23 8 8-23 23-10 2 2-10Z" fill="#F07850" stroke="#292725" strokeWidth="3" strokeLinejoin="round"/><path d="m37 17 4-4a5 5 0 0 1 7 7l-3 5" stroke="#292725" strokeWidth="3" strokeLinecap="round"/><path d="m12 50 10-2-8-8-2 10Z" fill="#FFE59A" stroke="#292725" strokeWidth="2" strokeLinejoin="round"/></svg></span>
-          <span className="gate-spark gate-spark-one">✳</span><span className="gate-spark gate-spark-two">✦</span>
-          <span className="gate-caption">OPEN · SORTED · READY</span><b>01</b>
-        </div>
         <div className="auth-gate-copy"><p className="eyebrow">YOUR ACADEMIC SPACE</p><h1>{supabaseConfigured ? "Less panic. More preparation." : "Connect the archive to continue."}</h1><p>{supabaseConfigured ? "Your semesters, notes, labs and study material. All in one place." : "Add the Supabase project URL and publishable key to .env.local, then restart the development server."}</p>
           {authNotice && <div className="auth-message" role="status">{authNotice}</div>}
           {message && <div className="auth-message" role="alert">{message}<button onClick={() => setMessage("")} aria-label="Dismiss message"><X size={14} /></button></div>}
           {supabaseConfigured && <button className="primary-button auth-cta" onClick={() => void login()}><LogIn size={16} /> Continue with Microsoft <ArrowRight size={16} /></button>}
           <small className="auth-domain-note">Only verified university accounts are allowed.</small>
+        </div>
+        <div className="auth-gate-art">
+          <div className="auth-logo-frame"><img src={jkluLogo} alt="J.K. Lakshmipat University" /></div>
+          <span className="auth-logo-spark" aria-hidden="true">✳</span>
         </div>
       </section>}
       {authorizedSession && <>
@@ -440,6 +437,7 @@ function ScrollVideoStory({ onDismiss, animateIn, onEntranceComplete }: { onDism
   const storyRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressRef = useRef<HTMLSpanElement>(null);
+  const autoCloseTriggeredRef = useRef(false);
   const [closing, setClosing] = useState(false);
   const prefersReducedMotion = useReducedMotion();
   const shutterTransition = { duration: prefersReducedMotion ? 0 : .84, ease: [.77, 0, .18, 1] as [number, number, number, number] };
@@ -451,39 +449,41 @@ function ScrollVideoStory({ onDismiss, animateIn, onEntranceComplete }: { onDism
     const videoTailTrim = 1.5;
     video?.pause();
 
-    const animateToScroll = () => {
+    const updateVideoFrame = () => {
       frame = 0;
       if (progressRef.current) progressRef.current.style.width = `${targetProgress * 100}%`;
       if (video && Number.isFinite(video.duration) && video.duration > 0) {
-        // The source ends with a short static tail. Map the end of the scroll
-        // range to the last useful frame and follow scroll without easing lag.
         const usefulDuration = Math.max(0, video.duration - videoTailTrim);
         const nextTime = targetProgress * usefulDuration;
-        if (!video.seeking && Math.abs(video.currentTime - nextTime) > 0.02) video.currentTime = nextTime;
+        if (!video.seeking && Math.abs(video.currentTime - nextTime) > .02) video.currentTime = nextTime;
       }
     };
 
-    const syncFrame = () => {
+    const syncScroll = () => {
       const story = storyRef.current;
       if (!story) return;
       const scrollDistance = story.offsetHeight - window.innerHeight;
       targetProgress = scrollDistance > 0
         ? Math.max(0, Math.min(1, -story.getBoundingClientRect().top / scrollDistance))
         : 0;
-      if (!frame) frame = requestAnimationFrame(animateToScroll);
+      if (targetProgress >= .995 && !autoCloseTriggeredRef.current) {
+        autoCloseTriggeredRef.current = true;
+        setClosing(true);
+      }
+      if (!frame) frame = requestAnimationFrame(updateVideoFrame);
     };
-    syncFrame();
-    video?.addEventListener("loadedmetadata", syncFrame);
-    video?.addEventListener("seeked", syncFrame);
-    window.addEventListener("scroll", syncFrame, { passive: true });
-    window.addEventListener("resize", syncFrame);
+    syncScroll();
+    video?.addEventListener("loadedmetadata", syncScroll);
+    video?.addEventListener("seeked", syncScroll);
+    window.addEventListener("scroll", syncScroll, { passive: true });
+    window.addEventListener("resize", syncScroll);
     return () => {
       cancelAnimationFrame(frame);
-      video?.removeEventListener("loadedmetadata", syncFrame);
-      video?.removeEventListener("seeked", syncFrame);
+      video?.removeEventListener("loadedmetadata", syncScroll);
+      video?.removeEventListener("seeked", syncScroll);
       video?.pause();
-      window.removeEventListener("scroll", syncFrame);
-      window.removeEventListener("resize", syncFrame);
+      window.removeEventListener("scroll", syncScroll);
+      window.removeEventListener("resize", syncScroll);
     };
   }, []);
 
@@ -493,7 +493,7 @@ function ScrollVideoStory({ onDismiss, animateIn, onEntranceComplete }: { onDism
       initial={animateIn ? { y: "-100%" } : false}
       animate={{ y: closing ? "-105%" : "0%" }} transition={shutterTransition}
       onAnimationComplete={() => { if (closing) onDismiss(); else if (animateIn) onEntranceComplete(); }}>
-      <video ref={videoRef} className="story-video" muted playsInline preload="auto" aria-hidden="true">
+      <video ref={videoRef} className="story-video is-active" muted playsInline preload="auto" aria-hidden="true">
         <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260701_083907_581a119a-89b7-4c9f-a6ef-560625e0086f.mp4" type="video/mp4" />
       </video>
       <div className="story-wash" />
@@ -503,6 +503,64 @@ function ScrollVideoStory({ onDismiss, animateIn, onEntranceComplete }: { onDism
       <div className="story-progress" aria-hidden="true"><span ref={progressRef} /></div>
     </motion.div>
   </motion.section>;
+}
+
+function SeamlessLoopBackground() {
+  const firstRef = useRef<HTMLVideoElement>(null);
+  const secondRef = useRef<HTMLVideoElement>(null);
+  const [activeVideo, setActiveVideo] = useState(0);
+
+  useEffect(() => {
+    const first = firstRef.current;
+    const second = secondRef.current;
+    if (!first || !second) return;
+    const videos: HTMLVideoElement[] = [first, second];
+    const overlapSeconds = .85;
+    let active = 0;
+    let fading = false;
+    let timeout = 0;
+    let frame = 0;
+    videos.forEach(video => { video.pause(); video.currentTime = 0; });
+    void first.play().catch(() => undefined);
+
+    const crossfade = () => {
+      if (fading) return;
+      const outgoing = videos[active]!;
+      const nextIndex = active === 0 ? 1 : 0;
+      const incoming = videos[nextIndex]!;
+      if (incoming.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      fading = true;
+      incoming.currentTime = 0;
+      void incoming.play().catch(() => undefined);
+      active = nextIndex;
+      setActiveVideo(active);
+      timeout = window.setTimeout(() => {
+        outgoing.pause();
+        outgoing.currentTime = 0;
+        fading = false;
+      }, overlapSeconds * 1000 + 100);
+    };
+    const onEnded = () => crossfade();
+    videos.forEach(video => video.addEventListener("ended", onEnded));
+    const checkEnd = () => {
+      const current = videos[active]!;
+      if (Number.isFinite(current.duration) && current.duration > 0 && current.currentTime >= current.duration - overlapSeconds) crossfade();
+      frame = requestAnimationFrame(checkEnd);
+    };
+    frame = requestAnimationFrame(checkEnd);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+      videos.forEach(video => { video.removeEventListener("ended", onEnded); video.pause(); });
+    };
+  }, []);
+
+  return <div className="auth-video-background" aria-hidden="true">
+    {[firstRef, secondRef].map((ref, index) => <video key={index} ref={ref} className={activeVideo === index ? "is-active" : ""} muted playsInline autoPlay preload="auto">
+      <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260622_204221_5339e40b-e73d-4ab0-9c65-79c18c66fd50.mp4" type="video/mp4" />
+    </video>)}
+    <div className="auth-video-shade" />
+  </div>;
 }
 
 function ResourcePreview({ file, blob, url, onBack, minimized, onMinimize, expanded, onExpand }: {
