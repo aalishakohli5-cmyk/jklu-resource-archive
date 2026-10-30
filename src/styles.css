@@ -1,0 +1,310 @@
+/* =========================================
+   JKLU ARCHIVE — FRONTEND REFINEMENTS
+   ========================================= */
+
+/* Remove unnecessary default button styling */
+
+.semester-banner,
+.cycle-card {
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+/* Clean selection stages */
+
+.selection-stage {
+    width: 100%;
+    margin-top: 28px;
+    animation: archive-enter 0.45s ease both;
+}
+
+@keyframes archive-enter {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Semester card */
+
+.semester-banner {
+    position: relative;
+    width: 100%;
+    transition:
+        transform 220ms ease,
+        box-shadow 220ms ease;
+}
+
+.semester-banner:hover {
+    transform: translateY(-4px);
+}
+
+/* Back navigation */
+
+.back-to-selection {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    background: transparent;
+    padding: 10px 0 18px;
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    color: #625d55;
+    transition: color 180ms ease;
+}
+
+.back-to-selection:hover {
+    color: #f07850;
+}
+
+/* Physics cycle selection */
+
+.cycle-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 245px;
+    padding: 28px 32px;
+    border: 2px solid #242321;
+    border-radius: 14px;
+    background: #d8e6a7;
+    box-shadow: 5px 6px 0 #242321;
+    transition:
+        transform 220ms ease,
+        box-shadow 220ms ease,
+        background 220ms ease;
+    overflow: hidden;
+}
+
+.cycle-card:hover {
+    transform: translate(-2px, -3px);
+    box-shadow: 8px 9px 0 #242321;
+    background: #e0edb7;
+}
+
+.cycle-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: "Courier New", monospace;
+    font-size: 11px;
+    letter-spacing: 0.09em;
+}
+
+.cycle-card-top .card-arrow {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border: 2px solid #242321;
+    border-radius: 50%;
+    background: #f5ebdc;
+    transition: transform 200ms ease;
+}
+
+.cycle-card:hover .card-arrow {
+    transform: rotate(45deg);
+}
+
+.cycle-card-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 20px;
+}
+
+.cycle-card-bottom>svg {
+    flex-shrink: 0;
+    opacity: 0.65;
+    color: #242321;
+}
+
+.cycle-kicker {
+    display: block;
+    margin-bottom: 8px;
+    font-family: "Courier New", monospace;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+}
+
+.cycle-card h3 {
+    margin: 0;
+    font-size: clamp(32px, 5vw, 58px);
+    font-weight: 850;
+    letter-spacing: -0.065em;
+    line-height: 1;
+}
+
+.cycle-card p {
+    margin: 12px 0 0;
+    font-size: 14px;
+    color: #555747;
+}
+
+/* =========================================
+   HORIZONTAL SUBJECT CAROUSEL
+   ========================================= */
+
+.subject-carousel-wrap {
+    width: 100%;
+    margin-top: 22px;
+}
+
+.carousel-hint {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding: 0 3px;
+    font-family: "Courier New", monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: #777067;
+}
+
+.subject-grid {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 20px;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px 8px 24px;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #a49a8b transparent;
+    -webkit-overflow-scrolling: touch;
+}
+
+.subject-grid::-webkit-scrollbar {
+    height: 6px;
+}
+
+.subject-grid::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.subject-grid::-webkit-scrollbar-thumb {
+    background: #b6aa98;
+    border-radius: 20px;
+}
+
+.subject-card {
+    flex: 0 0 clamp(260px, 32%, 390px);
+    min-width: 0;
+    min-height: 195px;
+    scroll-snap-align: start;
+    scroll-snap-stop: normal;
+    transition:
+        transform 220ms ease,
+        box-shadow 220ms ease;
+}
+
+.subject-card:hover {
+    transform: translateY(-5px);
+}
+
+/* Smooth interactions */
+
+.subject-card,
+.semester-banner,
+.cycle-card,
+.button {
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Breadcrumb spacing */
+
+.breadcrumbs {
+    margin-bottom: 16px;
+}
+
+/* Clean footer */
+
+.footer {
+    justify-content: flex-start;
+    min-height: 70px;
+}
+
+.footer-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Responsive layout */
+
+@media (max-width: 900px) {
+    .subject-card {
+        flex-basis: clamp(255px, 45%, 360px);
+    }
+
+    .cycle-card {
+        min-height: 220px;
+    }
+}
+
+@media (max-width: 600px) {
+    .subject-grid {
+        gap: 14px;
+        padding-right: 5px;
+        padding-left: 5px;
+    }
+
+    .subject-card {
+        flex-basis: 82%;
+        min-height: 185px;
+    }
+
+    .cycle-card {
+        min-height: 195px;
+        padding: 22px;
+    }
+
+    .cycle-card h3 {
+        font-size: 36px;
+    }
+
+    .cycle-card-bottom>svg {
+        width: 42px;
+    }
+
+    .carousel-hint {
+        font-size: 9px;
+    }
+
+    .footer {
+        padding-top: 18px;
+        padding-bottom: 18px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .subject-grid {
+        scroll-behavior: auto;
+    }
+
+    .selection-stage {
+        animation: none;
+    }
+
+    .subject-card,
+    .cycle-card,
+    .semester-banner {
+        transition: none;
+    }
+}
