@@ -19,17 +19,10 @@ import {
 import type { Session } from "@supabase/supabase-js";
 
 type View = "home" | "semesters" | "cycles" | "subjects" | "categories" | "resources" | "preview" | "admin";
-type Category = { id: string; label: string; keywords: string[]; icon: typeof BookText };
+type PdfLinkHotspot = { url: string; title: string; left: number; top: number; width: number; height: number };
 
 const tones = ["coral", "lavender", "mint", "yellow", "blue", "pink"];
 const semesterTones = ["lavender", "mint", "yellow", "blue", "pink", "coral", "peach", "aqua"];
-const categories: Category[] = [
-  { id: "syllabus", label: "SYLLABUS / CURRICULUM", keywords: ["syllabus", "syllb", "curriculum", "course description"], icon: BookText },
-  { id: "notes", label: "NOTES", keywords: ["notes", "class notes", "tutorial", "unit", "lecture", "mechanics", "electrodynamics"], icon: FileText },
-  { id: "labs", label: "LABS", keywords: ["labs", "lab"], icon: FlaskConical },
-  { id: "quizzes", label: "QUIZZES", keywords: ["quiz", "quizzes", "contest"], icon: CircleHelp },
-  { id: "midsem", label: "MIDSEM", keywords: ["mid sem", "mid-sem", "midsem", "midterm", "mid term"], icon: GraduationCap },
-];
 const roleNames: Record<string, string> = { owner: "Owner", admin: "Admin", sub_admin: "Sub-admin", contributor: "Contributor", student: "Student" };
 
 function dirs(node?: GitHubNode | null) {
@@ -46,10 +39,6 @@ function findNode(tree: GitHubNode | null, path: string): GitHubNode | null {
     if (found) return found;
   }
   return null;
-}
-function categoryFor(name: string) {
-  const lower = name.toLowerCase().replace(/[_-]+/g, " ");
-  return categories.find(category => category.keywords.some(keyword => lower.includes(keyword))) || null;
 }
 function countFiles(node?: GitHubNode | null) {
   return node ? flattenFiles(node).filter(file => file.name !== ".DS_Store").length : 0;
@@ -87,6 +76,7 @@ function FileKindIcon({ node }: { node: GitHubNode }) {
 }
 
 export default function App() {
+  const prefersReducedMotion = useReducedMotion();
   const [tree, setTree] = useState<GitHubNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -94,7 +84,6 @@ export default function App() {
   const [semesterPath, setSemesterPath] = useState("");
   const [cyclePath, setCyclePath] = useState("");
   const [subjectPath, setSubjectPath] = useState("");
-  const [activeCategory, setActiveCategory] = useState("");
   const [folderPath, setFolderPath] = useState("");
   const [previewFile, setPreviewFile] = useState<GitHubNode | null>(null);
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
@@ -118,11 +107,16 @@ export default function App() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [semesterMenuOpen, setSemesterMenuOpen] = useState(false);
 
-  async function loadTree() {
-    setLoading(true); setError("");
-    try { setTree(await fetchRepositoryTree()); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not load the repository."); }
-    finally { setLoading(false); }
+  async function loadTree(silent = false) {
+    if (!silent) { setLoading(true); setError(""); }
+    try {
+      setTree(await fetchRepositoryTree());
+      setError("");
+    } catch (reason) {
+      if (!silent) setError(reason instanceof Error ? reason.message : "Could not load the repository.");
+    } finally {
+      if (!silent) setLoading(false);
+    }
   }
   useEffect(() => {
     if (!supabase) { setAuthLoading(false); return; }
@@ -142,14 +136,21 @@ export default function App() {
   }, []);
   const authorizedSession = Boolean(session && isAuthorizedJkluEmail(session.user.email) && session.user.email_confirmed_at);
   useEffect(() => {
-    // After Microsoft returns to the app, go straight to the archive. The
-    // scroll-driven intro remains for signed-out visitors, but should not
-    // interrupt an authenticated session on login or refresh.
     if (!authLoading && authorizedSession) {
       introReopenPendingRef.current = false;
       setIsIntroOpen(false);
     }
   }, [authLoading, authorizedSession]);
+  useLayoutEffect(() => {
+    if (previousIntroModeRef.current === isIntroOpen) return;
+    previousIntroModeRef.current = isIntroOpen;
+    if (isIntroOpen) {
+      document.getElementById("intro-hero")?.scrollIntoView({ block: "start", behavior: "auto" });
+    } else {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    }
+  }, [isIntroOpen]);
   useEffect(() => {
     if (session && !authorizedSession) {
       setAuthNotice("This archive is limited to verified @jklu.edu.in accounts.");
@@ -159,6 +160,18 @@ export default function App() {
   useEffect(() => {
     if (authorizedSession) void loadTree();
     else { setTree(null); setLoading(false); }
+  }, [authorizedSession]);
+  useEffect(() => {
+    if (!authorizedSession) return;
+    const refreshTree = () => { if (!document.hidden) void loadTree(true); };
+    const interval = window.setInterval(refreshTree, 60_000);
+    window.addEventListener("focus", refreshTree);
+    document.addEventListener("visibilitychange", refreshTree);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshTree);
+      document.removeEventListener("visibilitychange", refreshTree);
+    };
   }, [authorizedSession]);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
   useEffect(() => {
@@ -186,34 +199,17 @@ export default function App() {
   const cycleLabel = actualCycles.length
     ? prettify(cycle?.name || actualCycles[0]?.name || "Learning track")
     : subjects.some(node => /physics/i.test(node.name)) ? "Physics Cycle" : "Course collection";
-  const selectedCategory = categories.find(category => category.id === activeCategory);
-  const categoryItems = useMemo(() => {
-    if (!subject || !selectedCategory) return [];
-    return filesAndDirs(subject).filter(node => categoryFor(node.name)?.id === selectedCategory.id);
-  }, [subject, selectedCategory]);
+  const subjectEntries = filesAndDirs(subject);
   const shownResources = useMemo(() => {
-    const children = filesAndDirs(currentFolder || subject);
-    const scoped = folderPath ? children : categoryItems;
+    const children = filesAndDirs(folderPath ? currentFolder : subject);
     const normalized = query.trim().toLowerCase();
-    return scoped.filter(node => {
+    return children.filter(node => {
       const matchesQuery = !normalized || `${node.name} ${node.path}`.toLowerCase().includes(normalized);
       const matchesType = typeFilter === "ALL" || node.type === "dir" || resourceType(node.name) === typeFilter;
       return matchesQuery && matchesType;
     });
-  }, [currentFolder, subject, folderPath, categoryItems, query, typeFilter]);
+  }, [currentFolder, subject, folderPath, query, typeFilter]);
   const hasAdminAccess = ["owner", "admin", "sub_admin", "contributor"].includes(role);
-
-  useLayoutEffect(() => {
-    if (previousIntroModeRef.current === isIntroOpen) return;
-    previousIntroModeRef.current = isIntroOpen;
-    if (isIntroOpen) {
-      document.getElementById("intro-hero")?.scrollIntoView({ block: "start", behavior: "auto" });
-    } else {
-      // The hero has already been removed and the archive has been mounted.
-      document.documentElement.scrollTop = 0;
-      document.body.scrollTop = 0;
-    }
-  }, [isIntroOpen]);
 
   function dismissIntro() {
     introReopenPendingRef.current = false;
@@ -225,30 +221,51 @@ export default function App() {
     setMobileMenu(false);
   }
 
+  useEffect(() => {
+    if (isIntroOpen || authorizedSession) return;
+    let touchStartY = 0;
+    const reopenOnUpwardScroll = () => {
+      if (window.scrollY <= 2) reopenIntro();
+    };
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < -6) reopenOnUpwardScroll();
+    };
+    const onTouchStart = (event: TouchEvent) => { touchStartY = event.touches[0]?.clientY ?? 0; };
+    const onTouchEnd = (event: TouchEvent) => {
+      const touchEndY = event.changedTouches[0]?.clientY ?? touchStartY;
+      if (touchEndY - touchStartY > 48) reopenOnUpwardScroll();
+    };
+    window.addEventListener("wheel", onWheel, { passive: true });
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("wheel", onWheel);
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [isIntroOpen, authorizedSession]);
+
 
   function resetSearch() { setQuery(""); setTypeFilter("ALL"); }
   function home() {
     setView("home"); setSemesterPath(""); setCyclePath(""); setSubjectPath("");
-    setActiveCategory(""); setFolderPath(""); resetSearch(); setMessage(""); setSemesterMenuOpen(false);
+    setFolderPath(""); resetSearch(); setMessage(""); setSemesterMenuOpen(false);
     previewRequestRef.current++; setPreviewFile(null); setPreviewBlob(null); setPreviewError(""); setPreviewLoading(false); setPreviewUrl(""); setPreviewMinimized(false); setPreviewExpanded(false);
   }
   function goSemester(node: GitHubNode) {
-    setSemesterPath(node.path); setCyclePath(""); setSubjectPath(""); setActiveCategory("");
+    setSemesterPath(node.path); setCyclePath(""); setSubjectPath("");
     setFolderPath(""); resetSearch(); setSemesterMenuOpen(false); setView("cycles");
   }
   function goCycle(node: GitHubNode) {
-    setCyclePath(node.path); setSubjectPath(""); setActiveCategory(""); setFolderPath("");
+    setCyclePath(node.path); setSubjectPath(""); setFolderPath("");
     resetSearch(); setView("subjects");
   }
   function goSubject(node: GitHubNode) {
-    setSubjectPath(node.path); setActiveCategory(""); setFolderPath(""); resetSearch(); setView("categories");
-  }
-  function goCategory(category: Category) {
-    setActiveCategory(category.id); setFolderPath(""); resetSearch(); setView("resources");
+    setSubjectPath(node.path); setFolderPath(""); resetSearch(); setView("categories");
   }
   async function openResource(node: GitHubNode) {
     if (node.type === "dir") {
-      setFolderPath(node.path); resetSearch();
+      setFolderPath(node.path); resetSearch(); setView("resources");
     } else if (!authorizedSession) {
       setMessage("Sign in with your JKLU account to open resources.");
     } else {
@@ -273,7 +290,7 @@ export default function App() {
   }
   function closePreview() {
     previewRequestRef.current++;
-    setView("resources"); setPreviewFile(null); setPreviewBlob(null); setPreviewError(""); setPreviewLoading(false); setPreviewUrl(""); setPreviewMinimized(false); setPreviewExpanded(false);
+    setView(folderPath ? "resources" : "categories"); setPreviewFile(null); setPreviewBlob(null); setPreviewError(""); setPreviewLoading(false); setPreviewUrl(""); setPreviewMinimized(false); setPreviewExpanded(false);
   }
   async function login() {
     setMessage(""); setAuthNotice(""); setMobileMenu(false);
@@ -288,15 +305,14 @@ export default function App() {
   const crumbs: Array<{ label: string; onClick: () => void; current?: boolean }> = [
     { label: "Archive", onClick: home },
   ];
-  if (semester && view !== "semesters") crumbs.push({ label: prettify(semester.name), onClick: () => { setView("cycles"); setCyclePath(""); setSubjectPath(""); setActiveCategory(""); setFolderPath(""); } });
-  if (cycle && view !== "cycles" && view !== "semesters") crumbs.push({ label: cycleLabel, onClick: () => { setView("subjects"); setSubjectPath(""); setActiveCategory(""); setFolderPath(""); } });
-  if (subject && ["categories", "resources"].includes(view)) crumbs.push({ label: prettify(subject.name), onClick: () => { setView("categories"); setActiveCategory(""); setFolderPath(""); }, current: view === "categories" });
-  if (selectedCategory && ["resources", "preview"].includes(view)) crumbs.push({ label: selectedCategory.label, onClick: () => { setFolderPath(""); setView("resources"); }, current: view === "resources" && !folderPath });
+  if (semester && view !== "semesters") crumbs.push({ label: semester.name, onClick: () => { setView("cycles"); setCyclePath(""); setSubjectPath(""); setFolderPath(""); } });
+  if (cycle && view !== "cycles" && view !== "semesters" && cycle.path !== semester?.path) crumbs.push({ label: cycle.name, onClick: () => { setView("subjects"); setSubjectPath(""); setFolderPath(""); } });
+  if (subject && ["categories", "resources", "preview"].includes(view)) crumbs.push({ label: subject.name, onClick: () => { setView("categories"); setFolderPath(""); }, current: view === "categories" });
   if (folderPath && currentFolder) {
     const parts = folderPath.split("/");
     const ancestors = parts.map((_part, index) => findNode(tree, parts.slice(0, index + 1).join("/"))).filter((node): node is GitHubNode => Boolean(node));
     ancestors.slice(ancestors.findIndex(node => node.path === subjectPath) + 1).forEach((node, index, list) => {
-      crumbs.push({ label: prettify(node.name), onClick: () => setFolderPath(node.path), current: index === list.length - 1 });
+      crumbs.push({ label: node.name, onClick: () => setFolderPath(node.path), current: index === list.length - 1 });
     });
   }
   if (view === "semesters") crumbs.push({ label: "Semesters", onClick: () => setView("semesters"), current: true });
@@ -305,8 +321,11 @@ export default function App() {
   if (view === "preview" && previewFile) crumbs.push({ label: previewFile.name, onClick: () => undefined, current: true });
 
   const transition = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -6 }, transition: { duration: 0.18 } };
-  const pageTitle = view === "semesters" ? "Choose a semester" : view === "cycles" ? prettify(semester?.name || "Learning tracks") : view === "subjects" ? cycleLabel : view === "categories" ? prettify(subject?.name || "Subject") : selectedCategory?.label || "Resources";
+  const pageTitle = view === "semesters" ? "Choose a semester" : view === "cycles" ? prettify(semester?.name || "Learning tracks") : view === "subjects" ? cycleLabel : view === "categories" ? subject?.name || "Subject" : view === "resources" ? currentFolder?.name || subject?.name || "Resources" : "Resources";
   const visibleBack = view !== "home" && view !== "admin" && view !== "preview";
+  const showResultCount = view === "semesters" || view === "cycles" || view === "subjects"
+    || (view === "categories" && subjectEntries.length > 0)
+    || (view === "resources" && shownResources.length > 0);
 
   return <div className={`app-shell ${isIntroOpen ? "intro-mode" : "archive-mode"}`}>
     {isIntroOpen ? <ScrollVideoStory
@@ -344,7 +363,7 @@ export default function App() {
       {authorizedSession && <>
       {view !== "home" && view !== "admin" && view !== "preview" && <motion.section key={view} {...transition} className="library-page">
         <nav className="breadcrumbs" aria-label="Breadcrumbs">{crumbs.map((crumb, index) => <span className="breadcrumb-item" key={`${crumb.label}-${index}`}>{index > 0 && <ChevronRight size={13} />}<button className={crumb.current ? "current" : ""} onClick={crumb.onClick}>{crumb.label}</button></span>)}</nav>
-        <div className={`page-heading ${view === "subjects" ? "subject-page-heading" : ""}`}><div><p className="eyebrow">{view === "semesters" ? "START HERE" : view === "cycles" ? "SEMESTER" : view === "subjects" ? "LEARNING TRACK" : view === "categories" ? "SUBJECT" : "RESOURCE CATEGORY"}</p><h1>{pageTitle}</h1></div><span className="result-count">{view === "semesters" ? semesterNodes.length : view === "cycles" ? cycles.length : view === "subjects" ? subjects.length : view === "categories" ? "05" : shownResources.length}<small>{view === "semesters" ? "SEMESTERS" : view === "cycles" ? "TRACKS" : view === "subjects" ? "SUBJECTS" : view === "categories" ? "SECTIONS" : "ITEMS"}</small></span></div>
+      <div className={`page-heading ${view === "subjects" ? "subject-page-heading" : ""}`}><div><p className="eyebrow">{view === "semesters" ? "START HERE" : view === "cycles" ? "SEMESTER" : view === "subjects" ? "LEARNING TRACK" : view === "categories" ? "SUBJECT" : "RESOURCE CATEGORY"}</p><h1>{pageTitle}</h1></div>{showResultCount && <span className="result-count">{view === "semesters" ? semesterNodes.length : view === "cycles" ? cycles.length : view === "subjects" ? subjects.length : view === "categories" ? subjectEntries.length : shownResources.length}<small>{view === "semesters" ? "SEMESTERS" : view === "cycles" ? "TRACKS" : view === "subjects" ? "SUBJECTS" : view === "categories" ? "ENTRIES" : "ITEMS"}</small></span>}</div>
 
         {visibleBack && <button className="back-link" onClick={() => {
           if (view === "semesters") home();
@@ -353,7 +372,8 @@ export default function App() {
           else if (view === "categories") setView("subjects");
           else if (folderPath) {
             const parentPath = folderPath.split("/").slice(0, -1).join("/");
-            setFolderPath(parentPath === subjectPath ? "" : parentPath);
+            if (parentPath === subjectPath) { setFolderPath(""); setView("categories"); }
+            else setFolderPath(parentPath);
           } else setView("categories");
         }}><ArrowLeft size={16} /> Back</button>}
 
@@ -381,18 +401,15 @@ export default function App() {
           </div>
         </section></> : <EmptyState title={subjects.length ? "No subjects match that search" : "No subjects found"} detail={subjects.length ? "Try another subject name." : "There are no subject folders in this learning track."} />}</>}
 
-        {view === "categories" && <div className="category-list">{categories.map((category, index) => {
-          const Icon = category.icon;
-          const matches = filesAndDirs(subject).filter(node => categoryFor(node.name)?.id === category.id);
-          const entries = matches.reduce((total, node) => total + (node.type === "dir" ? countFiles(node) : 1), 0);
-          return <motion.button key={category.id} className={`category-row tone-${tones[index + 1]}`} onClick={() => goCategory(category)} whileHover={{ x: 3 }}><span className="category-number">0{index + 1}</span><span className="category-icon"><Icon size={20} /></span><span className="category-name">{category.label}<small>{matches.length ? `${matches.length} folder/file entries` : "No matching items in this subject"}</small></span><span className="category-total">{entries} {entries === 1 ? "item" : "items"}</span><ArrowRight size={18} /></motion.button>;
-        })}</div>}
+        {view === "categories" && (subjectEntries.length > 0
+          ? <div className="category-list">{subjectEntries.map((node, index) => <motion.button key={node.path} className={`category-row tone-${tones[index % tones.length]}`} onClick={() => void openResource(node)} whileHover={{ x: 3 }}><span className="category-number">{String(index + 1).padStart(2, "0")}</span><span className="category-icon"><FileKindIcon node={node} /></span><span className="category-name">{node.name}<small>{node.type === "dir" ? "FOLDER" : resourceType(node.name)}</small></span><ArrowRight size={18} /></motion.button>)}</div>
+          : <EmptyState title="This subject folder is empty" detail="New repository entries will appear here when added." />)}
 
         {view === "resources" && <>
           {message && <div className="inline-notice"><CircleHelp size={17} /><span>{message}</span><button onClick={() => setMessage("")} aria-label="Dismiss"><X size={15} /></button></div>}
           <div className="resource-toolbar"><label className="search-box"><Search size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search this section…" /></label><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)} aria-label="Filter file types"><option value="ALL">All file types</option><option>PDF</option><option>PRESENTATION</option><option>DOCUMENT</option><option>SPREADSHEET</option><option>CODE</option><option>IMAGE</option><option>VIDEO</option><option>AUDIO</option><option>TEXT</option><option>FILE</option></select></div>
-          {folderPath && <div className="folder-context"><FolderOpen size={17} /> Viewing <b>{prettify(currentFolder?.name || "Folder")}</b></div>}
-          <div className="resource-list">{shownResources.map((node, index) => <motion.button key={node.path} className="resource-row" onClick={() => void openResource(node)} whileHover={{ x: 2 }}><span className="resource-index">{String(index + 1).padStart(2, "0")}</span><span className="resource-icon"><FileKindIcon node={node} /></span><span className="resource-name"><b>{prettify(node.name)}</b><small>{node.path}</small></span><span className="resource-type">{node.type === "dir" ? "FOLDER" : resourceType(node.name)}</span><span className="resource-size">{node.type === "dir" ? `${countFiles(node)} files` : formatSize(node.size)}</span>{node.type === "dir" ? <ChevronRight size={17} /> : <Eye size={16} />}</motion.button>)}{shownResources.length === 0 && <EmptyState title="No resources in this section" detail="Try another section, or check back when resources have been added." />}</div>
+          {folderPath && <div className="folder-context"><FolderOpen size={17} /> Viewing <b>{currentFolder?.name || "Folder"}</b></div>}
+          <div className="resource-list">{shownResources.map((node, index) => <motion.button key={node.path} className="resource-row" onClick={() => void openResource(node)} whileHover={{ x: 2 }}><span className="resource-index">{String(index + 1).padStart(2, "0")}</span><span className="resource-icon"><FileKindIcon node={node} /></span><span className="resource-name"><b>{node.name}</b><small>{node.path}</small></span><span className="resource-type">{node.type === "dir" ? "FOLDER" : resourceType(node.name)}</span><span className="resource-size">{node.type === "dir" ? `${countFiles(node)} files` : formatSize(node.size)}</span>{node.type === "dir" ? <ChevronRight size={17} /> : <Eye size={16} />}</motion.button>)}{shownResources.length === 0 && <EmptyState title="No resources in this folder" detail="New repository entries will appear here when added." />}</div>
         </>}
       </motion.section>}
 
@@ -440,7 +457,7 @@ function ScrollVideoStory({ onDismiss, animateIn, onEntranceComplete }: { onDism
   const autoCloseTriggeredRef = useRef(false);
   const [closing, setClosing] = useState(false);
   const prefersReducedMotion = useReducedMotion();
-  const shutterTransition = { duration: prefersReducedMotion ? 0 : .84, ease: [.77, 0, .18, 1] as [number, number, number, number] };
+  const shutterTransition = { duration: prefersReducedMotion ? 0 : .56, ease: [.77, 0, .18, 1] as [number, number, number, number] };
 
   useEffect(() => {
     let frame = 0;
@@ -793,6 +810,7 @@ function PdfPageCanvas({ document, pageNumber, scale, rotation, baseWidth, baseH
   const shellRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [nearViewport, setNearViewport] = useState(pageNumber === 1);
+  const [linkHotspots, setLinkHotspots] = useState<PdfLinkHotspot[]>([]);
 
   useEffect(() => {
     const element = shellRef.current;
@@ -832,11 +850,38 @@ function PdfPageCanvas({ document, pageNumber, scale, rotation, baseWidth, baseH
     };
   }, [document, pageNumber, scale, rotation, nearViewport, onError]);
 
+  useEffect(() => {
+    if (!nearViewport) {
+      setLinkHotspots(current => current.length ? [] : current);
+      return;
+    }
+    let cancelled = false;
+    void document.getPage(pageNumber).then(async page => {
+      const viewport = page.getViewport({ scale, rotation: (page.rotate + rotation) % 360 });
+      const annotations = await page.getAnnotations();
+      if (cancelled) return;
+      const hotspots = annotations.flatMap(annotation => {
+        if (annotation.subtype !== "Link" || !annotation.url || !Array.isArray(annotation.rect)) return [];
+        const [x1, y1] = viewport.convertToViewportPoint(annotation.rect[0], annotation.rect[1]);
+        const [x2, y2] = viewport.convertToViewportPoint(annotation.rect[2], annotation.rect[3]);
+        const left = Math.min(x1, x2);
+        const top = Math.min(y1, y2);
+        const width = Math.abs(x2 - x1);
+        const height = Math.abs(y2 - y1);
+        if (width < 1 || height < 1) return [];
+        return [{ url: annotation.url, title: annotation.title || `Open link from page ${pageNumber}`, left, top, width, height }];
+      });
+      setLinkHotspots(hotspots);
+    }).catch(() => { if (!cancelled) setLinkHotspots([]); });
+    return () => { cancelled = true; };
+  }, [document, pageNumber, scale, rotation, nearViewport]);
+
   const rotated = rotation % 180 !== 0;
   const width = (rotated ? baseHeight : baseWidth) * scale;
   const height = (rotated ? baseWidth : baseHeight) * scale;
   return <div ref={element => { shellRef.current = element; registerPage(pageNumber, element); }} className="pdf-page-shell" data-page-number={pageNumber} style={{ width, minHeight: height }}>
     <canvas ref={canvasRef} aria-label={`Page ${pageNumber}`} />
+    {linkHotspots.map((link, index) => <a key={`${link.url}-${index}`} className="pdf-link-hotspot" href={link.url} target="_blank" rel="noreferrer" aria-label={link.title} title={link.url} style={{ left: link.left, top: link.top, width: link.width, height: link.height }} />)}
   </div>;
 }
 

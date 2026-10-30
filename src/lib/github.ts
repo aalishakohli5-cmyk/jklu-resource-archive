@@ -46,6 +46,16 @@ export function prettify(name: string) {
   return name === "SEM-1" ? "Semester 01" : titleCaseFile(name);
 }
 
+function sortRepositoryChildren(node: GitHubNode) {
+  for (const child of node.children || []) sortRepositoryChildren(child);
+  node.children?.sort((a, b) => {
+    // GitHub's repository browser groups folders before files and sorts each
+    // group by name. Keep that familiar order at every level of the archive.
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+  });
+}
+
 async function requestArchiveService(url: string, init: RequestInit) {
   let response: Response;
   try {
@@ -99,14 +109,7 @@ export async function fetchRepositoryTree(): Promise<GitHubNode> {
     if (parent) parent.children!.push(node);
     nodes.set(item.path, node);
   }
-  const sort = (node: GitHubNode) => {
-    node.children?.sort((a, b) => {
-      if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
-      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
-    });
-    node.children?.forEach(sort);
-  };
-  sort(root);
+  sortRepositoryChildren(root);
   if (payload.truncated) console.warn("GitHub returned a truncated tree. Some files may be missing.");
   return root;
 }
