@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent, RefObject } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, BookOpen, BookText,
+  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, BookOpen, BookText,
   ChevronRight, CircleHelp, Code2, Download, Eye, File, FileImage, FileText, Film,
   Folder, FolderOpen, FlaskConical, GraduationCap, LogIn, LogOut, Search, ShieldCheck,
-  ChevronDown, X,
+  ChevronDown, ChevronLeft, Maximize2, Minimize2, Minus, RotateCw, X, ZoomIn, ZoomOut,
 } from "lucide-react";
 import {
   fetchRepositoryFile, fetchRepositoryTree, flattenFiles, GitHubNode, prettify, resourceType,
@@ -60,6 +63,19 @@ function formatSize(size?: number) {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(0)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
+function previewMimeType(name: string, fallback = "") {
+  const extension = name.split(".").pop()?.toLowerCase() || "";
+  const types: Record<string, string> = {
+    pdf: "application/pdf",
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", bmp: "image/bmp", svg: "image/svg+xml",
+    mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime", mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", ogg: "audio/ogg",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xls: "application/vnd.ms-excel", xlsm: "application/vnd.ms-excel.sheet.macroEnabled.12",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    txt: "text/plain", md: "text/markdown", log: "text/plain", json: "application/json", xml: "application/xml", csv: "text/csv",
+  };
+  return types[extension] || fallback || "application/octet-stream";
+}
 function FileKindIcon({ node }: { node: GitHubNode }) {
   if (node.type === "dir") return <Folder size={19} />;
   const type = resourceType(node.name);
@@ -84,12 +100,16 @@ export default function App() {
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  const [previewMinimized, setPreviewMinimized] = useState(false);
+  const [previewExpanded, setPreviewExpanded] = useState(false);
   const previewRequestRef = useRef(0);
   const [query, setQuery] = useState("");
   const [activeSubjectPath, setActiveSubjectPath] = useState("");
   const [typeFilter, setTypeFilter] = useState("ALL");
   const [session, setSession] = useState<Session | null>(null);
-  const [showIntro, setShowIntro] = useState(true);
+  const [isIntroOpen, setIsIntroOpen] = useState(true);
+  const introReopenPendingRef = useRef(false);
+  const previousIntroModeRef = useRef(isIntroOpen);
   const [authLoading, setAuthLoading] = useState(true);
   const [authNotice, setAuthNotice] = useState("");
   const [role, setRole] = useState("student");
@@ -120,6 +140,15 @@ export default function App() {
     return () => { mounted = false; data.subscription.unsubscribe(); };
   }, []);
   const authorizedSession = Boolean(session && isAuthorizedJkluEmail(session.user.email) && session.user.email_confirmed_at);
+  useEffect(() => {
+    // After Microsoft returns to the app, go straight to the archive. The
+    // scroll-driven intro remains for signed-out visitors, but should not
+    // interrupt an authenticated session on login or refresh.
+    if (!authLoading && authorizedSession) {
+      introReopenPendingRef.current = false;
+      setIsIntroOpen(false);
+    }
+  }, [authLoading, authorizedSession]);
   useEffect(() => {
     if (session && !authorizedSession) {
       setAuthNotice("This archive is limited to verified @jklu.edu.in accounts.");
@@ -173,13 +202,26 @@ export default function App() {
   }, [currentFolder, subject, folderPath, categoryItems, query, typeFilter]);
   const hasAdminAccess = ["owner", "admin", "sub_admin", "contributor"].includes(role);
 
+  useLayoutEffect(() => {
+    if (previousIntroModeRef.current === isIntroOpen) return;
+    previousIntroModeRef.current = isIntroOpen;
+    if (isIntroOpen) {
+      document.getElementById("intro-hero")?.scrollIntoView({ block: "start", behavior: "auto" });
+    } else {
+      // The hero has already been removed and the archive has been mounted.
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    }
+  }, [isIntroOpen]);
+
   function dismissIntro() {
-    setShowIntro(false);
-    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    introReopenPendingRef.current = false;
+    setIsIntroOpen(false);
   }
   function reopenIntro() {
-    setShowIntro(true);
-    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    introReopenPendingRef.current = true;
+    setIsIntroOpen(true);
+    setMobileMenu(false);
   }
 
 
@@ -187,7 +229,7 @@ export default function App() {
   function home() {
     setView("home"); setSemesterPath(""); setCyclePath(""); setSubjectPath("");
     setActiveCategory(""); setFolderPath(""); resetSearch(); setMessage(""); setSemesterMenuOpen(false);
-    previewRequestRef.current++; setPreviewFile(null); setPreviewBlob(null); setPreviewError(""); setPreviewLoading(false); setPreviewUrl("");
+    previewRequestRef.current++; setPreviewFile(null); setPreviewBlob(null); setPreviewError(""); setPreviewLoading(false); setPreviewUrl(""); setPreviewMinimized(false); setPreviewExpanded(false);
   }
   function goSemester(node: GitHubNode) {
     setSemesterPath(node.path); setCyclePath(""); setSubjectPath(""); setActiveCategory("");
@@ -210,12 +252,17 @@ export default function App() {
       setMessage("Sign in with your JKLU account to open resources.");
     } else {
       const requestId = ++previewRequestRef.current;
-      setPreviewFile(node); setPreviewBlob(null); setPreviewUrl(""); setPreviewError(""); setPreviewLoading(true); setView("preview");
+      setPreviewFile(node); setPreviewBlob(null); setPreviewUrl(""); setPreviewError(""); setPreviewLoading(true); setPreviewMinimized(false); setPreviewExpanded(false); setView("preview");
       try {
         const file = await fetchRepositoryFile(node.path);
         if (requestId !== previewRequestRef.current) return;
-        setPreviewBlob(file);
-        setPreviewUrl(URL.createObjectURL(file));
+        // The GitHub contents API may label raw PDFs/images as
+        // application/octet-stream. Correct the Blob MIME so browser viewers
+        // render inline instead of treating it as a download.
+        const mimeType = previewMimeType(node.name, file.type);
+        const previewableFile = file.type === mimeType ? file : new Blob([await file.arrayBuffer()], { type: mimeType });
+        setPreviewBlob(previewableFile);
+        setPreviewUrl(URL.createObjectURL(previewableFile));
       } catch (reason) {
         if (requestId === previewRequestRef.current) setPreviewError(reason instanceof Error ? reason.message : "Could not open this file.");
       } finally {
@@ -225,7 +272,7 @@ export default function App() {
   }
   function closePreview() {
     previewRequestRef.current++;
-    setView("resources"); setPreviewFile(null); setPreviewBlob(null); setPreviewError(""); setPreviewLoading(false); setPreviewUrl("");
+    setView("resources"); setPreviewFile(null); setPreviewBlob(null); setPreviewError(""); setPreviewLoading(false); setPreviewUrl(""); setPreviewMinimized(false); setPreviewExpanded(false);
   }
   async function login() {
     setMessage(""); setAuthNotice(""); setMobileMenu(false);
@@ -260,16 +307,22 @@ export default function App() {
   const pageTitle = view === "semesters" ? "Choose a semester" : view === "cycles" ? prettify(semester?.name || "Learning tracks") : view === "subjects" ? cycleLabel : view === "categories" ? prettify(subject?.name || "Subject") : selectedCategory?.label || "Resources";
   const visibleBack = view !== "home" && view !== "admin" && view !== "preview";
 
-  return <div className="app-shell">
-    {showIntro && <ScrollVideoStory onDismiss={dismissIntro} />}
+  return <div className={`app-shell ${isIntroOpen ? "intro-mode" : "archive-mode"}`}>
+    {isIntroOpen ? <ScrollVideoStory
+      animateIn={introReopenPendingRef.current}
+      onDismiss={dismissIntro}
+      onEntranceComplete={() => { introReopenPendingRef.current = false; }}
+    /> : <>
     <header className="topbar">
-      <button className="brand" onClick={home} aria-label="Go to archive home"><span className="brand-mark"><BookOpen size={20} /></span><span className="brand-copy"><b>JKLU <i>/</i> ARCHIVE</b><small>THE STUDENT RESOURCE INDEX</small></span></button>
+      <div className="brand-cluster">
+        <button className="brand" onClick={home} aria-label="Go to archive home"><span className="brand-mark"><BookOpen size={20} /></span><span className="brand-copy"><b>JKLU <i>/</i> ARCHIVE</b><small>THE STUDENT RESOURCE INDEX</small></span></button>
+        {!authorizedSession && <button className="intro-reopen" onClick={reopenIntro} aria-label="Reopen the introduction">INTRO <ArrowUp size={13} /></button>}
+      </div>
       <div className={`header-actions ${mobileMenu ? "menu-open" : ""}`}>
-        {!showIntro && <button className="intro-reopen" onClick={reopenIntro} aria-label="Reopen the introduction">INTRO <ArrowUpRight size={13} /></button>}
         {authorizedSession && hasAdminAccess && <button className="text-button" onClick={() => { setView("admin"); setMobileMenu(false); }}>Manage archive</button>}
         {authorizedSession && <div className="account-controls"><span className="account-email"><span className="account-dot">{(session?.user.email || "S")[0].toUpperCase()}</span><span>{session?.user.email}</span></span><button className="signout-button" onClick={() => void logout()}><LogOut size={15} /> <span>Log out</span></button></div>}
       </div>
-      {(!showIntro || authorizedSession) && <button className="menu-toggle" onClick={() => setMobileMenu(open => !open)} aria-label="Toggle menu">{mobileMenu ? <X size={19} /> : <span>☰</span>}</button>}
+      <button className="menu-toggle" onClick={() => setMobileMenu(open => !open)} aria-label="Toggle menu">{mobileMenu ? <X size={19} /> : <span>☰</span>}</button>
     </header>
 
     <main id="archive-home" className="main-content">
@@ -340,18 +393,22 @@ export default function App() {
 
         {view === "resources" && <>
           {message && <div className="inline-notice"><CircleHelp size={17} /><span>{message}</span><button onClick={() => setMessage("")} aria-label="Dismiss"><X size={15} /></button></div>}
-          <div className="resource-toolbar"><label className="search-box"><Search size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search this section…" /></label><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)} aria-label="Filter file types"><option value="ALL">All file types</option><option>PDF</option><option>PRESENTATION</option><option>CODE</option><option>IMAGE</option><option>FILE</option></select></div>
+          <div className="resource-toolbar"><label className="search-box"><Search size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search this section…" /></label><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)} aria-label="Filter file types"><option value="ALL">All file types</option><option>PDF</option><option>PRESENTATION</option><option>DOCUMENT</option><option>SPREADSHEET</option><option>CODE</option><option>IMAGE</option><option>VIDEO</option><option>AUDIO</option><option>TEXT</option><option>FILE</option></select></div>
           {folderPath && <div className="folder-context"><FolderOpen size={17} /> Viewing <b>{prettify(currentFolder?.name || "Folder")}</b></div>}
           <div className="resource-list">{shownResources.map((node, index) => <motion.button key={node.path} className="resource-row" onClick={() => void openResource(node)} whileHover={{ x: 2 }}><span className="resource-index">{String(index + 1).padStart(2, "0")}</span><span className="resource-icon"><FileKindIcon node={node} /></span><span className="resource-name"><b>{prettify(node.name)}</b><small>{node.path}</small></span><span className="resource-type">{node.type === "dir" ? "FOLDER" : resourceType(node.name)}</span><span className="resource-size">{node.type === "dir" ? `${countFiles(node)} files` : formatSize(node.size)}</span>{node.type === "dir" ? <ChevronRight size={17} /> : <Eye size={16} />}</motion.button>)}{shownResources.length === 0 && <EmptyState title="No resources in this section" detail="Try another section, or check back when resources have been added." />}</div>
         </>}
       </motion.section>}
 
-      {view === "preview" && <motion.section key={`preview-${previewFile?.path || "loading"}`} {...transition} className="library-page preview-page">
+      {view === "preview" && <motion.section key={`preview-${previewFile?.path || "loading"}`} {...transition} className={`library-page preview-page ${previewExpanded ? "is-expanded" : ""}`}>
         <nav className="breadcrumbs" aria-label="Breadcrumbs">{crumbs.map((crumb, index) => <span className="breadcrumb-item" key={`${crumb.label}-${index}`}>{index > 0 && <ChevronRight size={13} />}<button className={crumb.current ? "current" : ""} onClick={crumb.onClick}>{crumb.label}</button></span>)}</nav>
-        <div className="preview-heading"><div><p className="eyebrow">RESOURCE PREVIEW · {previewFile ? resourceType(previewFile.name) : "FILE"}</p><h1 title={previewFile?.name}>{previewFile?.name || "Opening resource"}</h1><small>{previewFile?.path}</small></div><div className="preview-actions"><button className="back-link" onClick={closePreview}><ArrowLeft size={15} /> Back to files</button>{previewUrl && previewFile && <a className="primary-button preview-download" href={previewUrl} download={previewFile.name}><Download size={16} /> Download</a>}</div></div>
-        {previewLoading && <div className="state-card preview-state"><span className="spinner" /><b>Opening your resource</b><small>Loading it securely from the archive…</small></div>}
-        {!previewLoading && previewError && <div className="state-card error-state"><CircleHelp size={25} /><b>We couldn't open this resource</b><small>{previewError}</small><button className="back-link" onClick={closePreview}><ArrowLeft size={15} /> Back to files</button></div>}
-        {!previewLoading && !previewError && previewFile && previewBlob && previewUrl && <ResourcePreview file={previewFile} blob={previewBlob} url={previewUrl} />}
+        <div className={`preview-heading ${previewFile?.name.toLowerCase().endsWith(".pdf") ? "pdf-preview-heading" : ""}`}><div><p className="eyebrow">RESOURCE PREVIEW · {previewFile ? resourceType(previewFile.name) : "FILE"}</p><h1 title={previewFile?.name}>{previewFile?.name || "Opening resource"}</h1><small>{previewFile?.path}</small></div>{!previewFile?.name.toLowerCase().endsWith(".pdf") && <div className="preview-actions"><button className="back-link" onClick={closePreview}><ArrowLeft size={15} /> Back to files</button><div className="preview-view-options"><button className="preview-view-control" onClick={() => { setPreviewMinimized(value => !value); setPreviewExpanded(false); }} aria-label={previewMinimized ? "Restore preview" : "Minimize preview"} title={previewMinimized ? "Restore preview" : "Minimize preview"}>{previewMinimized ? <Maximize2 size={15} /> : <Minus size={15} />}</button><button className="preview-view-control" onClick={() => { setPreviewExpanded(value => !value); setPreviewMinimized(false); }} aria-label={previewExpanded ? "Shrink preview" : "Expand preview"} title={previewExpanded ? "Shrink preview" : "Expand preview"}>{previewExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button></div>{previewUrl && previewFile && <a className="primary-button preview-download" href={previewUrl} download={previewFile.name}><Download size={16} /> Download</a>}</div>}</div>
+        <div className={`preview-stage ${previewMinimized ? "is-minimized" : ""} ${previewExpanded ? "is-expanded" : ""}`}>
+          {previewMinimized ? <button className="preview-restore" onClick={() => setPreviewMinimized(false)}><Maximize2 size={15} /> Preview minimized <span>Restore preview</span></button> : <>
+            {previewLoading && <div className="state-card preview-state"><span className="spinner" /><b>Opening your resource</b><small>Loading it securely from the archive…</small></div>}
+            {!previewLoading && previewError && <div className="state-card error-state"><CircleHelp size={25} /><b>We couldn't open this resource</b><small>{previewError}</small><button className="back-link" onClick={closePreview}><ArrowLeft size={15} /> Back to files</button></div>}
+            {!previewLoading && !previewError && previewFile && previewBlob && previewUrl && <ResourcePreview file={previewFile} blob={previewBlob} url={previewUrl} onBack={closePreview} minimized={previewMinimized} onMinimize={() => { setPreviewMinimized(true); setPreviewExpanded(false); }} expanded={previewExpanded} onExpand={() => { setPreviewExpanded(value => !value); setPreviewMinimized(false); }} />}
+          </>}
+        </div>
       </motion.section>}
 
       {view === "admin" && <motion.section {...transition} className="library-page admin-page"><nav className="breadcrumbs"><button onClick={home}>Archive</button><ChevronRight size={13} /><span>Manage archive</span></nav><p className="eyebrow">PRIVATE MANAGEMENT</p><h1>Archive status</h1><div className="admin-cards"><div className="admin-card tone-lavender"><ShieldCheck size={20} /><span>Signed-in role</span><b>{roleNames[role] || role}</b></div><div className="admin-card tone-mint"><FolderOpen size={20} /><span>Indexed files</span><b>{countFiles(tree)}</b></div><div className="admin-card tone-yellow"><BookOpen size={20} /><span>Supabase</span><b>{supabaseConfigured ? "Connected" : "Not configured"}</b></div></div><p className="admin-note">Repository browsing is read-only and uses the live GitHub tree. Storage migration and role management are not configured in this frontend.</p><button className="back-link" onClick={home}><ArrowLeft size={16} /> Back to archive</button></motion.section>}
@@ -375,10 +432,11 @@ export default function App() {
       </>}
     </main>
     <footer className="footer"><span className="footer-brand"><BookOpen size={17} /> JKLU / ARCHIVE</span><small className="footer-credit">Made by Aalisha Kohli</small><small className="footer-tagline">Academic resources, in one place.</small></footer>
+    </>}
   </div>;
 }
 
-function ScrollVideoStory({ onDismiss }: { onDismiss: () => void }) {
+function ScrollVideoStory({ onDismiss, animateIn, onEntranceComplete }: { onDismiss: () => void; animateIn: boolean; onEntranceComplete: () => void }) {
   const storyRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressRef = useRef<HTMLSpanElement>(null);
@@ -389,20 +447,20 @@ function ScrollVideoStory({ onDismiss }: { onDismiss: () => void }) {
   useEffect(() => {
     let frame = 0;
     let targetProgress = 0;
-    let displayProgress = 0;
     const video = videoRef.current;
+    const videoTailTrim = 1.5;
     video?.pause();
 
     const animateToScroll = () => {
       frame = 0;
-      displayProgress += (targetProgress - displayProgress) * 0.3;
-      if (Math.abs(targetProgress - displayProgress) < 0.0005) displayProgress = targetProgress;
       if (progressRef.current) progressRef.current.style.width = `${targetProgress * 100}%`;
       if (video && Number.isFinite(video.duration) && video.duration > 0) {
-        const nextTime = displayProgress * Math.max(0, video.duration - 0.025);
-        if (!video.seeking && Math.abs(video.currentTime - nextTime) > 0.025) video.currentTime = nextTime;
+        // The source ends with a short static tail. Map the end of the scroll
+        // range to the last useful frame and follow scroll without easing lag.
+        const usefulDuration = Math.max(0, video.duration - videoTailTrim);
+        const nextTime = targetProgress * usefulDuration;
+        if (!video.seeking && Math.abs(video.currentTime - nextTime) > 0.02) video.currentTime = nextTime;
       }
-      if (displayProgress !== targetProgress) frame = requestAnimationFrame(animateToScroll);
     };
 
     const syncFrame = () => {
@@ -429,24 +487,28 @@ function ScrollVideoStory({ onDismiss }: { onDismiss: () => void }) {
     };
   }, []);
 
-  return <motion.section className="video-story" ref={storyRef} aria-label="JKLU Resource Archive introduction"
+  return <motion.section id="intro-hero" className="video-story" ref={storyRef} aria-label="JKLU Resource Archive introduction"
     animate={closing ? { height: 0 } : undefined} transition={shutterTransition}>
     <motion.div className={`story-sticky ${closing ? "is-closing" : ""}`}
-      animate={{ y: closing ? "-100%" : "0%" }} transition={shutterTransition}
-      onAnimationComplete={() => { if (closing) onDismiss(); }}>
+      initial={animateIn ? { y: "-100%" } : false}
+      animate={{ y: closing ? "-105%" : "0%" }} transition={shutterTransition}
+      onAnimationComplete={() => { if (closing) onDismiss(); else if (animateIn) onEntranceComplete(); }}>
       <video ref={videoRef} className="story-video" muted playsInline preload="auto" aria-hidden="true">
         <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260701_083907_581a119a-89b7-4c9f-a6ef-560625e0086f.mp4" type="video/mp4" />
       </video>
       <div className="story-wash" />
       <div className="story-copy"><h1>JKLU <span>/</span> ARCHIVE</h1><p>NOTES · LABS · QUIZZES · EXAM PAPERS</p></div>
-      <div className="story-bottom"><button className="story-enter" type="button" onClick={() => setClosing(true)}>ENTER THE ARCHIVE <ArrowDown size={16} /></button></div>
+      <div className="story-bottom"><button className="story-enter" type="button" disabled={closing} onClick={() => setClosing(true)}>ENTER THE ARCHIVE <ArrowDown size={16} /></button></div>
       <div className="story-scroll-cue" aria-hidden="true"><svg viewBox="0 0 28 44" fill="none"><rect x="4" y="2" width="20" height="31" rx="10" stroke="currentColor" strokeWidth="1.8"/><path d="M14 9v7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><path d="m9 36 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
       <div className="story-progress" aria-hidden="true"><span ref={progressRef} /></div>
     </motion.div>
   </motion.section>;
 }
 
-function ResourcePreview({ file, blob, url }: { file: GitHubNode; blob: Blob; url: string }) {
+function ResourcePreview({ file, blob, url, onBack, minimized, onMinimize, expanded, onExpand }: {
+  file: GitHubNode; blob: Blob; url: string; onBack: () => void; minimized: boolean;
+  onMinimize: () => void; expanded: boolean; onExpand: () => void;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [officeError, setOfficeError] = useState("");
   const [sheets, setSheets] = useState<Array<{ name: string; rows: unknown[][] }>>([]);
@@ -495,7 +557,7 @@ function ResourcePreview({ file, blob, url }: { file: GitHubNode; blob: Blob; ur
     return () => { cancelled = true; host.replaceChildren(); };
   }, [blob, file.name, isWord, isPresentation, isSpreadsheet]);
 
-  if (extension === "pdf") return <div className="preview-frame-wrap"><iframe className="preview-frame" src={url} title={file.name} /></div>;
+  if (extension === "pdf") return <PdfReader file={file} blob={blob} url={url} onBack={onBack} minimized={minimized} onMinimize={onMinimize} expanded={expanded} onExpand={onExpand} />;
   if (isImage) return <div className="preview-image-wrap"><img src={url} alt={file.name} /></div>;
   if (isVideo) return <div className="preview-media-wrap"><video src={url} controls playsInline /></div>;
   if (isAudio) return <div className="preview-audio-wrap"><div className="preview-file-art"><File size={32} /></div><b>{file.name}</b><audio src={url} controls /></div>;
@@ -506,6 +568,218 @@ function ResourcePreview({ file, blob, url }: { file: GitHubNode; blob: Blob; ur
   }
   if (isWord || isPresentation) return <div className={`office-viewer ${isWord ? "word-viewer" : "presentation-viewer"}`}><div ref={hostRef} className="office-render-host" />{officeError && <div className="office-render-error"><CircleHelp size={20} /><b>Preview unavailable</b><small>{officeError}</small><small>You can still use Download to open the original file.</small></div>}</div>;
   return <UnsupportedPreview file={file} />;
+}
+
+function PdfReader({ file, blob, url, onBack, minimized, onMinimize, expanded, onExpand }: {
+  file: GitHubNode; blob: Blob; url: string; onBack: () => void; minimized: boolean;
+  onMinimize: () => void; expanded: boolean; onExpand: () => void;
+}) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const readerRef = useRef<HTMLDivElement>(null);
+  const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
+  const [basePageSize, setBasePageSize] = useState({ width: 612, height: 792 });
+  const [pageNumber, setPageNumber] = useState(1);
+  const [zoom, setZoom] = useState(1);
+  const [fitMode, setFitMode] = useState<"width" | "page">("width");
+  const [rotation, setRotation] = useState(0);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [error, setError] = useState("");
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const pageElementsRef = useRef(new Map<number, HTMLDivElement>());
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadingTask: PDFDocumentLoadingTask | undefined;
+    setDocument(null); setPageNumber(1); setError("");
+    void import("pdfjs-dist").then(async pdfjs => {
+      if (cancelled) return;
+      pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+      loadingTask = pdfjs.getDocument({ data: await blob.arrayBuffer() });
+      const loaded = await loadingTask.promise;
+      if (!cancelled) {
+        const firstPage = await loaded.getPage(1);
+        const dimensions = firstPage.getViewport({ scale: 1 });
+        setBasePageSize({ width: dimensions.width, height: dimensions.height });
+        setDocument(loaded);
+      }
+      else await loadingTask?.destroy();
+    }).catch(reason => {
+      if (!cancelled) setError(reason instanceof Error ? reason.message : "This PDF could not be opened.");
+    });
+    return () => { cancelled = true; void loadingTask?.destroy(); };
+  }, [blob]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const observer = new ResizeObserver(entries => {
+      const rect = entries[0]?.contentRect;
+      if (rect) setViewportSize({ width: rect.width, height: rect.height });
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  const pageCount = document?.numPages || 0;
+  const rotatedWidth = rotation % 180 ? basePageSize.height : basePageSize.width;
+  const rotatedHeight = rotation % 180 ? basePageSize.width : basePageSize.height;
+  const availableWidth = Math.max(280, viewportSize.width - 56);
+  const availableHeight = Math.max(280, viewportSize.height - 44);
+  const fitScale = fitMode === "width"
+    ? availableWidth / rotatedWidth
+    : Math.min(availableWidth / rotatedWidth, availableHeight / rotatedHeight);
+  const renderScale = Math.min(3.5, Math.max(.2, fitScale * zoom));
+  const registerPage = (number: number, element: HTMLDivElement | null) => {
+    if (element) pageElementsRef.current.set(number, element);
+    else pageElementsRef.current.delete(number);
+  };
+  const goToPage = (number: number) => {
+    const next = Math.max(1, Math.min(pageCount || 1, number));
+    setPageNumber(next);
+    const viewport = viewportRef.current;
+    const page = pageElementsRef.current.get(next);
+    if (viewport && page) {
+      const top = viewport.scrollTop + page.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+      viewport.scrollTo({ top, behavior: "smooth" });
+    }
+  };
+
+  useEffect(() => {
+    const updateFullscreen = () => setIsFullscreen(window.document.fullscreenElement === readerRef.current);
+    window.document.addEventListener("fullscreenchange", updateFullscreen);
+    return () => window.document.removeEventListener("fullscreenchange", updateFullscreen);
+  }, []);
+
+  const toggleFullscreen = () => {
+    const element = readerRef.current;
+    if (!element) return;
+    if (window.document.fullscreenElement === element) void window.document.exitFullscreen();
+    else if (element.requestFullscreen) void element.requestFullscreen();
+  };
+
+  const handleViewerKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, a, input, select, textarea")) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const step = Math.max(240, viewport.clientHeight * .82);
+    if (event.ctrlKey || event.metaKey) {
+      if (event.key === "+" || event.key === "=") { event.preventDefault(); changeZoom(.1); }
+      else if (event.key === "-") { event.preventDefault(); changeZoom(-.1); }
+      else if (event.key === "0") { event.preventDefault(); setFitMode("width"); setZoom(1); }
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "PageDown" || (event.key === " " && !event.shiftKey)) {
+      event.preventDefault(); viewport.scrollBy({ top: step, behavior: "smooth" });
+    } else if (event.key === "ArrowUp" || event.key === "PageUp" || (event.key === " " && event.shiftKey)) {
+      event.preventDefault(); viewport.scrollBy({ top: -step, behavior: "smooth" });
+    } else if (event.key === "Home") {
+      event.preventDefault(); viewport.scrollTo({ top: 0, behavior: "smooth" });
+    } else if (event.key === "End") {
+      event.preventDefault(); viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+    } else if (event.key.toLowerCase() === "r") {
+      event.preventDefault(); setRotation(value => (value + 90) % 360);
+    }
+  };
+
+  useEffect(() => {
+    const root = viewportRef.current;
+    if (!root || !document) return;
+    const observer = new IntersectionObserver(entries => {
+      const visiblePages = entries.filter(entry => entry.isIntersecting);
+      if (!visiblePages.length) return;
+      visiblePages.sort((a, b) => Math.abs(a.boundingClientRect.top - root.getBoundingClientRect().top) - Math.abs(b.boundingClientRect.top - root.getBoundingClientRect().top));
+      const current = Number((visiblePages[0].target as HTMLElement).dataset.pageNumber);
+      if (current) setPageNumber(current);
+    }, { root, threshold: [0, .2, .5, .8], rootMargin: "-5% 0px -65% 0px" });
+    pageElementsRef.current.forEach(element => observer.observe(element));
+    return () => observer.disconnect();
+  }, [document, pageCount]);
+
+  const changeZoom = (delta: number) => { setFitMode("width"); setZoom(value => Math.min(2.5, Math.max(.5, Math.round((value + delta) * 10) / 10))); };
+  return <div ref={readerRef} className={`pdf-reader ${minimized ? "is-minimized" : ""} ${expanded ? "is-expanded" : ""} ${isFullscreen ? "is-fullscreen" : ""}`} onKeyDown={handleViewerKeys}>
+    <div className="pdf-toolbar" role="toolbar" aria-label="PDF viewer controls">
+      <button className="pdf-tool pdf-back" onClick={onBack} aria-label="Back to files" title="Back to files"><ArrowLeft size={17} /></button>
+      <span className="pdf-filename" title={file.name}>{file.name}</span>
+      <div className="pdf-tool-group pdf-pages" aria-label="Page navigation">
+        <button className="pdf-tool" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} aria-label="Previous page"><ChevronLeft size={17} /></button>
+        <input aria-label="Current page" type="number" min={1} max={pageCount || 1} value={pageNumber} onChange={event => goToPage(Number(event.target.value) || 1)} />
+        <span className="pdf-page-total">/ {pageCount || "—"}</span>
+        <button className="pdf-tool" onClick={() => goToPage(pageNumber + 1)} disabled={pageNumber >= pageCount} aria-label="Next page"><ChevronRight size={17} /></button>
+      </div>
+      <div className="pdf-tool-group pdf-zoom" aria-label="Zoom controls">
+        <button className="pdf-tool" onClick={() => changeZoom(-.1)} aria-label="Zoom out"><ZoomOut size={17} /></button>
+        <span className="pdf-zoom-value">{Math.round(zoom * 100)}%</span>
+        <button className="pdf-tool" onClick={() => changeZoom(.1)} aria-label="Zoom in"><ZoomIn size={17} /></button>
+      </div>
+      <div className="pdf-tool-group pdf-tools-secondary">
+        <button className={`pdf-tool pdf-fit ${fitMode === "width" ? "active" : ""}`} onClick={() => { setFitMode("width"); setZoom(1); }} title="Fit to width">Fit width</button>
+        <button className={`pdf-tool pdf-fit ${fitMode === "page" ? "active" : ""}`} onClick={() => { setFitMode("page"); setZoom(1); }} title="Fit page">Fit page</button>
+        <button className="pdf-tool" onClick={() => setRotation(value => (value + 90) % 360)} aria-label="Rotate page" title="Rotate page"><RotateCw size={17} /></button>
+      </div>
+      <div className="pdf-tool-group pdf-tool-end">
+        <button className="pdf-tool" onClick={toggleFullscreen} aria-label={isFullscreen ? "Return to normal viewer" : "View fullscreen"} title={isFullscreen ? "Return to normal viewer" : "View fullscreen"}>{isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button>
+        <a className="pdf-tool" href={url} download={file.name} aria-label="Download PDF" title="Download PDF"><Download size={17} /></a>
+      </div>
+    </div>
+    {minimized ? <div className="pdf-minimized-restore">Viewer minimized</div> : <div className="pdf-canvas-viewport" ref={viewportRef} tabIndex={0} title="Keyboard: ↑/↓ or Page Up/Down to scroll · Ctrl/⌘ + or − to zoom · Home/End to jump" aria-label="PDF pages. Use arrow or page keys to scroll, Ctrl or Command plus and minus to zoom." onPointerDown={event => { if ((event.target as HTMLElement).closest(".pdf-page-shell")) event.currentTarget.focus({ preventScroll: true }); }}>
+      {error ? <div className="pdf-reader-error"><CircleHelp size={22} /><b>PDF preview unavailable</b><span>{error}</span><a href={url} download={file.name}>Download the original file</a></div> : !document ? <div className="pdf-reader-loading"><span className="spinner" /><span>Preparing document…</span></div> : Array.from({ length: pageCount }, (_, index) => <PdfPageCanvas key={index + 1} document={document} pageNumber={index + 1} scale={renderScale} rotation={rotation} baseWidth={basePageSize.width} baseHeight={basePageSize.height} registerPage={registerPage} viewportRef={viewportRef} onError={setError} />)}
+    </div>}
+  </div>;
+}
+
+function PdfPageCanvas({ document, pageNumber, scale, rotation, baseWidth, baseHeight, registerPage, viewportRef, onError }: {
+  document: PDFDocumentProxy; pageNumber: number; scale: number; rotation: number; baseWidth: number; baseHeight: number;
+  registerPage: (page: number, element: HTMLDivElement | null) => void; viewportRef: RefObject<HTMLDivElement>; onError: (message: string) => void;
+}) {
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [nearViewport, setNearViewport] = useState(pageNumber === 1);
+
+  useEffect(() => {
+    const element = shellRef.current;
+    const root = viewportRef.current;
+    if (!element || !root) return;
+    const observer = new IntersectionObserver(entries => {
+      setNearViewport(entries.some(entry => entry.isIntersecting));
+    }, { root, rootMargin: "1100px 0px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [viewportRef]);
+
+  useEffect(() => {
+    if (!nearViewport || !canvasRef.current) return;
+    let cancelled = false;
+    let renderTask: RenderTask | undefined;
+    void document.getPage(pageNumber).then(page => {
+      if (cancelled || !canvasRef.current) return;
+      const viewport = page.getViewport({ scale, rotation: (page.rotate + rotation) % 360 });
+      const canvas = canvasRef.current;
+      const context = canvas.getContext("2d", { alpha: false });
+      if (!context) { onError("Your browser could not create a PDF canvas."); return; }
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.floor(viewport.width * pixelRatio);
+      canvas.height = Math.floor(viewport.height * pixelRatio);
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
+      renderTask = page.render({ canvas, canvasContext: context, viewport, transform: pixelRatio !== 1 ? [pixelRatio, 0, 0, pixelRatio, 0, 0] : undefined });
+      return renderTask.promise;
+    }).catch(reason => {
+      if (!cancelled && reason?.name !== "RenderingCancelledException") onError(reason instanceof Error ? reason.message : `Page ${pageNumber} could not be rendered.`);
+    });
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+      if (canvasRef.current) { canvasRef.current.width = 0; canvasRef.current.height = 0; }
+    };
+  }, [document, pageNumber, scale, rotation, nearViewport, onError]);
+
+  const rotated = rotation % 180 !== 0;
+  const width = (rotated ? baseHeight : baseWidth) * scale;
+  const height = (rotated ? baseWidth : baseHeight) * scale;
+  return <div ref={element => { shellRef.current = element; registerPage(pageNumber, element); }} className="pdf-page-shell" data-page-number={pageNumber} style={{ width, minHeight: height }}>
+    <canvas ref={canvasRef} aria-label={`Page ${pageNumber}`} />
+  </div>;
 }
 
 function TextResourcePreview({ blob, extension }: { blob: Blob; extension: string }) {
